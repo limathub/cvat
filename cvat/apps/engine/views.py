@@ -1713,23 +1713,27 @@ class JobViewSet(viewsets.GenericViewSet, mixins.ListModelMixin, mixins.CreateMo
 
     @transaction.atomic
     def perform_destroy(self, instance):
-        if instance.type != JobType.GROUND_TRUTH:
-            raise ValidationError("Only ground truth jobs can be removed")
-
-        validation_layout: models.ValidationLayout | None = getattr(
-            instance.segment.task.data, 'validation_layout', None
-        )
-        if (validation_layout and validation_layout.mode == models.ValidationMode.GT_POOL):
-            raise ValidationError(
-                'GT jobs cannot be removed when task validation mode is "{}"'.format(
-                    models.ValidationMode.GT_POOL
-                )
+        if instance.type == JobType.GROUND_TRUTH:
+            validation_layout: models.ValidationLayout | None = getattr(
+                instance.segment.task.data, 'validation_layout', None
             )
+            if (validation_layout and validation_layout.mode == models.ValidationMode.GT_POOL):
+                raise ValidationError(
+                    'GT jobs cannot be removed when task validation mode is "{}"'.format(
+                        models.ValidationMode.GT_POOL
+                    )
+                )
 
-        super().perform_destroy(instance)
+            super().perform_destroy(instance)
 
-        if validation_layout:
-            validation_layout.delete()
+            if validation_layout:
+                validation_layout.delete()
+        elif instance.type == JobType.ANNOTATION:
+            super().perform_destroy(instance)
+        else:
+            raise ValidationError(
+                f"Removing jobs of type '{instance.type}' is not supported"
+            )
 
     # UploadMixin method
     def get_upload_dir(self):

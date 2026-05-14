@@ -1013,8 +1013,9 @@ class JobWriteSerializer(WriteOnceMixin, serializers.ModelSerializer):
 
     @transaction.atomic
     def create(self, validated_data):
-        if validated_data["type"] != models.JobType.GROUND_TRUTH:
+        if validated_data["type"] not in (models.JobType.GROUND_TRUTH, models.JobType.ANNOTATION):
             raise serializers.ValidationError(f"Unexpected job type '{validated_data['type']}'")
+        is_gt_job = validated_data["type"] == models.JobType.GROUND_TRUTH
 
         task_id = validated_data.pop('task_id')
         task = models.Task.objects.select_for_update().get(pk=task_id)
@@ -1023,12 +1024,12 @@ class JobWriteSerializer(WriteOnceMixin, serializers.ModelSerializer):
             raise serializers.ValidationError(
                 "This task has no data attached yet. Please set up task data and try again"
             )
-        if task.dimension != models.DimensionType.DIM_2D:
+        if is_gt_job and task.dimension != models.DimensionType.DIM_2D:
             raise serializers.ValidationError(
                 "Ground Truth jobs can only be added in 2d tasks"
             )
 
-        if task.data.validation_mode in (models.ValidationMode.GT_POOL, models.ValidationMode.GT):
+        if is_gt_job and task.data.validation_mode in (models.ValidationMode.GT_POOL, models.ValidationMode.GT):
             raise serializers.ValidationError(
                 f'Task with validation mode "{task.data.validation_mode}" '
                 'cannot have more than 1 GT job'
@@ -1037,7 +1038,11 @@ class JobWriteSerializer(WriteOnceMixin, serializers.ModelSerializer):
         task_size = task.data.size
         valid_frame_ids = task.data.get_valid_frame_indices()
 
-        frame_selection_method = validated_data.pop("frame_selection_method")
+        frame_selection_method = validated_data.pop("frame_selection_method", None)
+        if frame_selection_method is None:
+            raise serializers.ValidationError(
+                '"frame_selection_method" is required for frame-based job creation'
+            )
         if frame_selection_method == models.JobFrameSelectionMethod.RANDOM_UNIFORM:
             if frame_count := validated_data.pop("frame_count", None):
                 if task_size < frame_count:
@@ -1147,9 +1152,10 @@ class JobWriteSerializer(WriteOnceMixin, serializers.ModelSerializer):
 
         job.make_dirs()
 
-        task.data.update_validation_layout(
-            models.ValidationLayout(mode=models.ValidationMode.GT, frames=frames)
-        )
+        if is_gt_job:
+            task.data.update_validation_layout(
+                models.ValidationLayout(mode=models.ValidationMode.GT, frames=frames)
+            )
 
         return job
 
