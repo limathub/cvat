@@ -49,8 +49,9 @@ class SafeCharField(models.CharField):
 
 
 class DimensionType(str, Enum):
-    DIM_3D = '3d'
+    DIM_1D = '1d'
     DIM_2D = '2d'
+    DIM_3D = '3d'
 
     @classmethod
     def choices(cls):
@@ -433,15 +434,16 @@ class Data(models.Model):
     # Media descriptors
     images: models.manager.RelatedManager[Image]
     video: MaybeUndefined[Video]
+    audio: MaybeUndefined[Audio]
     related_files: models.manager.RelatedManager[RelatedFile]
 
     # Cache descriptors
     chunk_size = models.PositiveIntegerField(null=True)
-    image_quality = models.PositiveSmallIntegerField(default=50)
+    image_quality = models.PositiveSmallIntegerField(default=0)
     compressed_chunk_type = models.CharField(max_length=32, choices=DataChoice.choices(),
-        default=DataChoice.IMAGESET)
+        blank=True, default="")
     original_chunk_type = models.CharField(max_length=32, choices=DataChoice.choices(),
-        default=DataChoice.IMAGESET)
+        blank=True, default="")
 
     # Storage descriptors
     storage_method = models.CharField(max_length=15, choices=StorageMethodChoice.choices(), default=StorageMethodChoice.FILE_SYSTEM)
@@ -631,7 +633,6 @@ class Data(models.Model):
         transaction.on_commit(clear_original_files, robust=True)
 
 
-
 class Video(models.Model):
     data = models.OneToOneField(Data, on_delete=models.CASCADE, related_name="video", null=True)
     path = models.CharField(max_length=1024, default='')
@@ -640,6 +641,13 @@ class Video(models.Model):
 
     class Meta:
         default_permissions = ()
+
+
+class Audio(models.Model):
+    data = models.OneToOneField(Data, on_delete=models.CASCADE, related_name="audio", null=True)
+    path = models.CharField(max_length=1024)
+    sampling_rate = models.PositiveIntegerField()
+    has_cover_image = models.BooleanField(default=False)
 
 
 class Image(models.Model):
@@ -822,7 +830,16 @@ class TaskQuerySet(models.QuerySet):
 
 class TaskMode(TextChoices):
     ANNOTATION = "annotation"
+    "task is a set of independent MediaType elements"
+
     INTERPOLATION = "interpolation"
+    "task is an ordered sequence of MediaType elements"
+
+
+class MediaType(TextChoices):
+    IMAGE = "image"
+    POINT_CLOUD = "point_cloud"
+    AUDIO = "audio"
 
 
 class Task(TimestampedModel, AssignableModel, FileSystemRelatedModel):
@@ -832,21 +849,26 @@ class Task(TimestampedModel, AssignableModel, FileSystemRelatedModel):
         null=True, blank=True, related_name="tasks",
         related_query_name="task")
     name = SafeCharField(max_length=256)
-    mode = models.CharField(max_length=32, choices=TaskMode.choices, default="", blank=True)
     owner = models.ForeignKey(User, null=True, blank=True,
         on_delete=models.SET_NULL, related_name="tasks", related_query_name="task")
-
     bug_tracker = models.CharField(max_length=2000, blank=True, default="")
+    status = models.CharField(max_length=32, choices=StatusChoice.choices(),
+                              default=StatusChoice.ANNOTATION)
+
     overlap = models.PositiveIntegerField(null=True)
+
     # Zero means that there are no limits (default)
     # Note that the files can be split into jobs in a custom way in this case
     segment_size = models.PositiveIntegerField(default=0)
-    status = models.CharField(max_length=32, choices=StatusChoice.choices(),
-                              default=StatusChoice.ANNOTATION)
+    segment_set: models.manager.RelatedManager[Segment]
+
     data = models.ForeignKey(
         Data, on_delete=models.CASCADE, null=True, related_name="tasks", related_query_name="task"
     )
-    dimension = models.CharField(max_length=2, choices=DimensionType.choices(), default=DimensionType.DIM_2D)
+    dimension = models.CharField(max_length=2, choices=DimensionType.choices(), default="", blank=True)
+    mode = models.CharField(max_length=32, choices=TaskMode.choices, default="", blank=True)
+    media_type = models.CharField(max_length=32, choices=MediaType.choices, default="", blank=True)
+
     subset = models.CharField(max_length=64, blank=True, default="")
     organization = models.ForeignKey('organizations.Organization', null=True, default=None,
         blank=True, on_delete=models.SET_NULL, related_name="tasks", related_query_name="task")
@@ -1169,7 +1191,7 @@ class Job(TimestampedModel, AssignableModel, FileSystemRelatedModel):
     labeledimage_set: models.manager.RelatedManager[LabeledImage]
     labeledshape_set: models.manager.RelatedManager[LabeledShape]
     labeledtrack_set: models.manager.RelatedManager[LabeledTrack]
-    trackedshape_set: models.manager.RelatedManager[TrackedShape]
+    # trackedshape_set: models.manager.RelatedManager[TrackedShape] # TODO: add DB relation?
     labeledimageattributeval_set: models.manager.RelatedManager[LabeledImageAttributeVal]
     labeledshapeattributeval_set: models.manager.RelatedManager[LabeledShapeAttributeVal]
     labeledtrackattributeval_set: models.manager.RelatedManager[LabeledTrackAttributeVal]
@@ -1372,7 +1394,7 @@ class ShapeType(str, Enum):
     POINTS = 'points'       # (x0, y0, ..., xn, yn)
     ELLIPSE = 'ellipse'     # (cx, cy, rx, ty)
     CUBOID = 'cuboid'       # (x0, y0, ..., x7, y7)
-    MASK = 'mask'       # (rle mask, left, top, right, bottom)
+    MASK = 'mask'           # (rle mask, left, top, right, bottom)
     SKELETON = 'skeleton'
 
     @classmethod
@@ -1400,16 +1422,27 @@ class Annotation(models.Model):
     id = models.BigAutoField(primary_key=True)
     job = models.ForeignKey(Job, on_delete=models.DO_NOTHING)
     label = models.ForeignKey(Label, on_delete=models.CASCADE)
-    frame = models.PositiveIntegerField()
-    group = models.PositiveIntegerField(null=True)
+    group = models.PositiveIntegerField(
+        # null is not used for anything.
+        # TODO: disallow null on the DB level,
+        # when there are other changes to the annotation tables
+        # https://github.com/cvat-ai/cvat/pull/10522.
+        # - it results in a long migration, that's undesirable if done alone.
+        null=True
+    )
     source = models.CharField(max_length=16, choices=SourceType.choices(),
         default=str(SourceType.MANUAL), null=True)
 
     class Meta:
         abstract = True
-        default_permissions = ()
 
-class Shape(models.Model):
+class FrameAnnotationMixin(models.Model):
+    frame = models.PositiveIntegerField()
+
+    class Meta:
+        abstract = True
+
+class ShapeAnnotationMixin(models.Model):
     type = models.CharField(max_length=16, choices=ShapeType.choices())
     occluded = models.BooleanField(default=False)
     outside = models.BooleanField(default=False)
@@ -1419,35 +1452,40 @@ class Shape(models.Model):
 
     class Meta:
         abstract = True
-        default_permissions = ()
 
-class LabeledImage(Annotation):
+
+class ScoredAnnotationMixin(models.Model):
+    score = models.FloatField(default=1)
+
+    class Meta:
+        abstract = True
+
+
+class LabeledImage(Annotation, FrameAnnotationMixin):
     pass
 
 class LabeledImageAttributeVal(AttributeVal):
     image = models.ForeignKey(LabeledImage, on_delete=models.DO_NOTHING,
         related_name='attributes', related_query_name='attribute')
 
-class LabeledShape(Annotation, Shape):
+class LabeledShape(Annotation, FrameAnnotationMixin, ShapeAnnotationMixin, ScoredAnnotationMixin):
     parent = models.ForeignKey('self', on_delete=models.DO_NOTHING, null=True, related_name='elements')
-    score = models.FloatField(default=1)
 
 class LabeledShapeAttributeVal(AttributeVal):
     shape = models.ForeignKey(LabeledShape, on_delete=models.DO_NOTHING,
         related_name='attributes', related_query_name='attribute')
 
-class LabeledTrack(Annotation):
+class LabeledTrack(Annotation, FrameAnnotationMixin):
     parent = models.ForeignKey('self', on_delete=models.DO_NOTHING, null=True, related_name='elements')
 
 class LabeledTrackAttributeVal(AttributeVal):
     track = models.ForeignKey(LabeledTrack, on_delete=models.DO_NOTHING,
         related_name='attributes', related_query_name='attribute')
 
-class TrackedShape(Shape):
+class TrackedShape(FrameAnnotationMixin, ShapeAnnotationMixin):
     id = models.BigAutoField(primary_key=True)
     track = models.ForeignKey(LabeledTrack, on_delete=models.CASCADE,
         related_name='shapes', related_query_name='shape')
-    frame = models.PositiveIntegerField()
 
 class TrackedShapeAttributeVal(AttributeVal):
     shape = models.ForeignKey(TrackedShape, on_delete=models.DO_NOTHING,

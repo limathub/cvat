@@ -356,10 +356,12 @@ class TestListTasksFilters(CollectionSimpleFilterTestBase):
         (
             "assignee",
             "dimension",
+            "media_type",
             "mode",
             "name",
             "owner",
             "project_id",
+            "project_name",
             "status",
             "subset",
             "tracker_link",
@@ -532,6 +534,35 @@ class TestPostTasks:
             labels, _ = api_client.labels_api.list(task_id=task.id)
 
             assert labels.count == 0
+
+    def test_cannot_create_data_with_non_http_remote_files(self, admin_user):
+        """Regression test for https://github.com/cvat-ai/cvat/issues/9647.
+
+        `remote_files` entries are direct download URLs and must use the
+        http(s) scheme. Anything else is rejected synchronously by the
+        DataSerializer with HTTP 400, instead of being enqueued and failing
+        deep in the worker.
+        """
+        bad_url = "not-a-url/foo.jpg"
+
+        with make_api_client(admin_user) as api_client:
+            task, _ = api_client.tasks_api.create({"name": "task with bad remote_files"})
+
+            _, response = api_client.tasks_api.create_data(
+                task.id,
+                data_request=models.DataRequest(
+                    image_quality=70,
+                    remote_files=[bad_url],
+                ),
+                upload_start=True,
+                upload_finish=True,
+                _parse_response=False,
+                _check_status=False,
+            )
+
+            assert response.status == HTTPStatus.BAD_REQUEST
+            assert b"remote_files" in response.data
+            assert bad_url.encode() in response.data
 
 
 @pytest.mark.usefixtures("restore_db_per_class")
@@ -1013,7 +1044,7 @@ class TestGetTaskDataset:
         default_subset_name,
         subset_path_template,
     ):
-        tasks = filter_tasks(exclude_target_storage__location="cloud_storage")
+        tasks = filter_tasks(exclude_target_storage__location="cloud_storage", dimension="2d")
         group_key_func = itemgetter("subset")
         subsets_and_tasks = [
             (subset, next(group))
@@ -1397,20 +1428,32 @@ class TestTaskBackups:
 
     @pytest.mark.parametrize("mode", ["annotation", "interpolation"])
     def test_can_export_backup(self, tasks, mode):
-        task_id = next(t for t in tasks if t["mode"] == mode and not t["validation_mode"])["id"]
+        task_id = next(
+            t
+            for t in tasks
+            if t["dimension"] == "2d"
+            if t["mode"] == mode and not t["validation_mode"]
+        )["id"]
         self._test_can_export_backup(task_id)
 
     def test_can_export_backup_for_consensus_task(self, tasks):
-        task_id = next(t for t in tasks if t["consensus_enabled"])["id"]
+        task_id = next(t for t in tasks if t["dimension"] == "2d" if t["consensus_enabled"])["id"]
         self._test_can_export_backup(task_id)
 
     def test_can_export_backup_for_honeypot_task(self, tasks):
-        task_id = next(t for t in tasks if t["validation_mode"] == "gt_pool")["id"]
+        task_id = next(
+            t for t in tasks if t["dimension"] == "2d" if t["validation_mode"] == "gt_pool"
+        )["id"]
         self._test_can_export_backup(task_id)
 
     @pytest.mark.parametrize("mode", ["annotation", "interpolation"])
     def test_can_export_backup_for_simple_gt_job_task(self, tasks, mode):
-        task_id = next(t for t in tasks if t["mode"] == mode and t["validation_mode"] == "gt")["id"]
+        task_id = next(
+            t
+            for t in tasks
+            if t["dimension"] == "2d"
+            if t["mode"] == mode and t["validation_mode"] == "gt"
+        )["id"]
         self._test_can_export_backup(task_id)
 
     def test_cannot_export_backup_for_task_without_data(self, tasks):
@@ -1493,20 +1536,34 @@ class TestTaskBackups:
 
     @pytest.mark.parametrize("mode", ["annotation", "interpolation"])
     def test_can_import_backup(self, tasks, mode):
-        task_id = next(t for t in tasks if t["mode"] == mode if not t["validation_mode"])["id"]
+        task_id = next(
+            t
+            for t in tasks
+            if t["dimension"] == "2d"
+            if t["mode"] == mode
+            if not t["validation_mode"]
+        )["id"]
         self._test_can_restore_task_from_backup(task_id)
 
     @pytest.mark.parametrize("mode", ["annotation", "interpolation"])
     def test_can_import_backup_with_simple_gt_job_task(self, tasks, mode):
-        task_id = next(t for t in tasks if t["mode"] == mode if t["validation_mode"] == "gt")["id"]
+        task_id = next(
+            t
+            for t in tasks
+            if t["dimension"] == "2d"
+            if t["mode"] == mode
+            if t["validation_mode"] == "gt"
+        )["id"]
         self._test_can_restore_task_from_backup(task_id)
 
     def test_can_import_backup_with_honeypot_task(self, tasks):
-        task_id = next(t for t in tasks if t["validation_mode"] == "gt_pool")["id"]
+        task_id = next(
+            t for t in tasks if t["dimension"] == "2d" if t["validation_mode"] == "gt_pool"
+        )["id"]
         self._test_can_restore_task_from_backup(task_id)
 
     def test_can_import_backup_with_consensus_task(self, tasks):
-        task_id = next(t for t in tasks if t["consensus_enabled"])["id"]
+        task_id = next(t for t in tasks if t["dimension"] == "2d" if t["consensus_enabled"])["id"]
         self._test_can_restore_task_from_backup(task_id)
 
     def test_can_import_backup_with_consensus_task_created_before_consensus_replica_removal(self):
@@ -1558,6 +1615,7 @@ class TestTaskBackups:
         gt_job = next(
             j
             for j in jobs
+            if j["dimension"] == "2d"
             if j["type"] == "ground_truth"
             if job_has_annotations(j["id"])
             if tasks[j["task_id"]]["validation_mode"] == "gt"
