@@ -4,7 +4,8 @@
 # SPDX-License-Identifier: MIT
 """
 Rebuild annotation jobs on a task into:
-  - job_anchor: first anchor_job_size task-relative frames (default 50 => indices 0..49)
+  - job_anchor: first anchor_job_size task-relative frames
+    (default 3 * stripe_step)
   - Stripe jobs: one per offset 0..stripe_step-1, with frames offset + k * stripe_step
 
 Requires CVAT with:
@@ -51,7 +52,7 @@ def rebuild_interleaved_jobs(
     s: requests.Session,
     tid: int,
     *,
-    anchor_job_size: int = 50,
+    anchor_job_size: int | None = None,
     stripe_step: int = 10,
     dry_run: bool = False,
 ) -> list[dict[str, Any]]:
@@ -75,11 +76,13 @@ def rebuild_interleaved_jobs(
     if n < 1:
         print(f"task size is {n}; nothing to assign to jobs.", file=sys.stderr)
         sys.exit(1)
-    if anchor_job_size < 1:
-        print(f"anchor_job_size ({anchor_job_size}) must be >= 1", file=sys.stderr)
-        sys.exit(1)
     if stripe_step < 1:
         print(f"stripe_step ({stripe_step}) must be >= 1", file=sys.stderr)
+        sys.exit(1)
+    if anchor_job_size is None:
+        anchor_job_size = 3 * stripe_step
+    if anchor_job_size < 1:
+        print(f"anchor_job_size ({anchor_job_size}) must be >= 1", file=sys.stderr)
         sys.exit(1)
 
     anchor_size = min(anchor_job_size, n)
@@ -182,9 +185,9 @@ def main() -> None:
     r.add_argument(
         "--anchor-job-size",
         type=int,
-        default=50,
+        default=None,
         metavar="N",
-        help="job_anchor includes N task-relative frames (indices 0..N-1; default 50)",
+        help="job_anchor includes N task-relative frames (indices 0..N-1; default 3 * --stripe-step)",
     )
     r.add_argument(
         "--stripe-step",

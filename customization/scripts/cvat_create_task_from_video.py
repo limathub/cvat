@@ -55,6 +55,10 @@ DEFAULT_IMAGE_QUALITY = 85
 DEFAULT_SEGMENT_SIZE = 0  # CVAT expands 0 to the full task data size.
 
 
+def _default_anchor_job_size(stripe_step: int) -> int:
+    return 3 * stripe_step
+
+
 def _api(s: requests.Session, method: str, path: str, **kwargs: Any) -> requests.Response:
     url = f"{s.base_url}{path}"  # type: ignore[attr-defined]
     return s.request(method, url, **kwargs)
@@ -282,11 +286,16 @@ def cmd_create(args: argparse.Namespace) -> None:
     if args.step < 1:
         print("--step must be >= 1", file=sys.stderr)
         sys.exit(2)
-    if args.anchor_job_size < 1:
-        print("--anchor-job-size must be >= 1", file=sys.stderr)
-        sys.exit(2)
     if args.stripe_step < 1:
         print("--stripe-step must be >= 1", file=sys.stderr)
+        sys.exit(2)
+    anchor_job_size = (
+        args.anchor_job_size
+        if args.anchor_job_size is not None
+        else _default_anchor_job_size(args.stripe_step)
+    )
+    if anchor_job_size < 1:
+        print("--anchor-job-size must be >= 1", file=sys.stderr)
         sys.exit(2)
 
     print("--- ffprobe ---")
@@ -301,7 +310,7 @@ def cmd_create(args: argparse.Namespace) -> None:
             task_name=args.task_name,
             labels_json=args.labels_json,
             project_id=args.project_id,
-            anchor_job_size=args.anchor_job_size,
+            anchor_job_size=anchor_job_size,
             stripe_step=args.stripe_step,
             dry_run=True,
         )
@@ -315,7 +324,7 @@ def cmd_create(args: argparse.Namespace) -> None:
         task_name=args.task_name,
         labels_json=args.labels_json,
         project_id=args.project_id,
-        anchor_job_size=args.anchor_job_size,
+        anchor_job_size=anchor_job_size,
         stripe_step=args.stripe_step,
         dry_run=False,
     )
@@ -340,13 +349,16 @@ def cmd_wizard(args: argparse.Namespace) -> None:
     default_name = Path(video.split("?", 1)[0]).stem[:200]
     task_name = _prompt_line("task name", default_name)
 
-    anchor_job_size = _prompt_int("anchor_job_size (number of task frames in job_anchor)", 50)
-    if anchor_job_size < 1:
-        print("anchor_job_size must be >= 1", file=sys.stderr)
-        sys.exit(2)
     stripe_step = _prompt_int("stripe_step (for jobs 2+)", 10)
     if stripe_step < 1:
         print("stripe_step must be >= 1", file=sys.stderr)
+        sys.exit(2)
+    anchor_job_size = _prompt_int(
+        "anchor_job_size (number of task frames in job_anchor)",
+        _default_anchor_job_size(stripe_step),
+    )
+    if anchor_job_size < 1:
+        print("anchor_job_size must be >= 1", file=sys.stderr)
         sys.exit(2)
 
     print("\n--- create summary ---")
@@ -410,9 +422,9 @@ def main() -> None:
     cr.add_argument(
         "--anchor-job-size",
         type=int,
-        default=50,
+        default=None,
         metavar="N",
-        help="job_anchor includes N task-relative frames (0..N-1; default 50)",
+        help="job_anchor includes N task-relative frames (0..N-1; default 3 * --stripe-step)",
     )
     cr.add_argument(
         "--stripe-step",

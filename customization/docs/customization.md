@@ -28,8 +28,8 @@ The wizard asks for:
 
 - `step`: CVAT frame sampling, stored as `frame_filter = "step=<step>"`.
 - `task name`: CVAT task name.
-- `anchor_job_size`: number of task-relative frames in `job_anchor`.
 - `stripe_step`: creates exactly `stripe_step` stripe jobs, one for each offset.
+- `anchor_job_size`: number of task-relative frames in `job_anchor`; defaults to `3 * stripe_step` unless explicitly specified.
 
 Fixed defaults:
 
