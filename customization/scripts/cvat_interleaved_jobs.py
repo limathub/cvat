@@ -5,8 +5,9 @@
 """
 Rebuild annotation jobs on a task into:
   - job_anchor: first anchor_job_size task-relative frames
-    (default 3 * stripe_step)
-  - Stripe jobs: one per offset 0..stripe_step-1, with frames offset + k * stripe_step
+    (default 3 * num_stripe_jobs)
+  - Stripe jobs: one per offset 0..num_stripe_jobs-1, with frames
+    offset + k * num_stripe_jobs
 
 Requires CVAT with:
   - POST /api/jobs accepting type=annotation + frame_selection_method=manual + frames=[...]
@@ -38,6 +39,8 @@ import requests
 
 from cvat_api_env import cvat_session_from_env
 
+DEFAULT_NUM_STRIPE_JOBS = 6
+
 
 def _session() -> requests.Session:
     return cvat_session_from_env()
@@ -53,7 +56,7 @@ def rebuild_interleaved_jobs(
     tid: int,
     *,
     anchor_job_size: int | None = None,
-    stripe_step: int = 10,
+    stripe_step: int = DEFAULT_NUM_STRIPE_JOBS,
     dry_run: bool = False,
 ) -> list[dict[str, Any]]:
     """Delete all annotation jobs on task, create job_anchor + stripe manual-frame jobs.
@@ -77,7 +80,7 @@ def rebuild_interleaved_jobs(
         print(f"task size is {n}; nothing to assign to jobs.", file=sys.stderr)
         sys.exit(1)
     if stripe_step < 1:
-        print(f"stripe_step ({stripe_step}) must be >= 1", file=sys.stderr)
+        print(f"num_stripe_jobs ({stripe_step}) must be >= 1", file=sys.stderr)
         sys.exit(1)
     if anchor_job_size is None:
         anchor_job_size = 3 * stripe_step
@@ -187,14 +190,18 @@ def main() -> None:
         type=int,
         default=None,
         metavar="N",
-        help="job_anchor includes N task-relative frames (indices 0..N-1; default 3 * --stripe-step)",
+        help="job_anchor includes N task-relative frames (indices 0..N-1; default 3 * --num-stripe-jobs)",
     )
     r.add_argument(
-        "--stripe-step",
+        "--num-stripe-jobs",
+        "--num_stripe_jobs",
         type=int,
-        default=10,
-        help="Stripe step K; creates K stripe jobs for offsets 0..K-1 (default 10)",
+        default=DEFAULT_NUM_STRIPE_JOBS,
+        dest="stripe_step",
+        metavar="K",
+        help=f"Number of stripe jobs to create, one per offset 0..K-1 (default {DEFAULT_NUM_STRIPE_JOBS})",
     )
+    r.add_argument("--stripe-step", type=int, dest="stripe_step", help=argparse.SUPPRESS)
     r.add_argument("--dry-run", action="store_true")
     r.set_defaults(func=cmd_rebuild)
 

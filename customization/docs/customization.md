@@ -28,8 +28,8 @@ The wizard asks for:
 
 - `step`: CVAT frame sampling, stored as `frame_filter = "step=<step>"`.
 - `task name`: CVAT task name.
-- `stripe_step`: creates exactly `stripe_step` stripe jobs, one for each offset.
-- `anchor_job_size`: number of task-relative frames in `job_anchor`; defaults to `3 * stripe_step` unless explicitly specified.
+- `num_stripe_jobs`: creates exactly `num_stripe_jobs` stripe jobs, one for each offset; default `6`.
+- `anchor_job_size`: number of task-relative frames in `job_anchor`; defaults to `3 * num_stripe_jobs` unless explicitly specified.
 
 Fixed defaults:
 
@@ -41,9 +41,9 @@ Fixed defaults:
 The script creates the CVAT task, uploads the video, deletes CVAT's default annotation jobs, then creates manual-frame jobs:
 
 - `job_anchor`: frames `[0, 1, ..., anchor_job_size - 1]`.
-- Stripe offset `0`: frames `[0, stripe_step, 2*stripe_step, ...]`.
-- Stripe offset `1`: frames `[1, 1+stripe_step, 1+2*stripe_step, ...]`.
-- Continue through offset `stripe_step - 1`.
+- Stripe offset `0`: frames `[0, num_stripe_jobs, 2*num_stripe_jobs, ...]`.
+- Stripe offset `1`: frames `[1, 1+num_stripe_jobs, 1+2*num_stripe_jobs, ...]`.
+- Continue through offset `num_stripe_jobs - 1`.
 
 Job frames are task-relative after `frame_filter` is applied, not original source-media frame numbers.
 
@@ -130,7 +130,7 @@ Tracked annotation needs stable identity across the whole task. If every annotat
 
 `job_anchor` solves this by creating the canonical tracks first. After it is completed, its sparse track keyframe sequence is copied into all stripe jobs. Stripe annotators then refine existing tracks on their assigned frames.
 
-Stripe jobs exist to split the refinement workload. With `stripe_step=K`, the task is split into `K` frame residues, so every task-relative frame is owned by exactly one stripe offset.
+Stripe jobs exist to split the refinement workload. With `num_stripe_jobs=K`, the task is split into `K` frame residues, so every task-relative frame is owned by exactly one stripe offset.
 
 ```mermaid
 flowchart TD
@@ -153,7 +153,7 @@ flowchart TD
     G --> I[Optional apply-job review/master CVAT job]
 ```
 
-Example with `anchor_job_size=4` and `stripe_step=3`:
+Example with `anchor_job_size=4` and `num_stripe_jobs=3`:
 
 ```text
 job_anchor:      0, 1, 2, 3

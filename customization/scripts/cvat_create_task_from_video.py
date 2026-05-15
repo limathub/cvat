@@ -53,6 +53,7 @@ from cvat_interleaved_jobs import rebuild_interleaved_jobs
 
 DEFAULT_IMAGE_QUALITY = 85
 DEFAULT_SEGMENT_SIZE = 0  # CVAT expands 0 to the full task data size.
+DEFAULT_NUM_STRIPE_JOBS = 6
 
 
 def _default_anchor_job_size(stripe_step: int) -> int:
@@ -287,7 +288,7 @@ def cmd_create(args: argparse.Namespace) -> None:
         print("--step must be >= 1", file=sys.stderr)
         sys.exit(2)
     if args.stripe_step < 1:
-        print("--stripe-step must be >= 1", file=sys.stderr)
+        print("--num-stripe-jobs must be >= 1", file=sys.stderr)
         sys.exit(2)
     anchor_job_size = (
         args.anchor_job_size
@@ -349,9 +350,9 @@ def cmd_wizard(args: argparse.Namespace) -> None:
     default_name = Path(video.split("?", 1)[0]).stem[:200]
     task_name = _prompt_line("task name", default_name)
 
-    stripe_step = _prompt_int("stripe_step (for jobs 2+)", 10)
+    stripe_step = _prompt_int("num_stripe_jobs (for jobs 2+)", DEFAULT_NUM_STRIPE_JOBS)
     if stripe_step < 1:
-        print("stripe_step must be >= 1", file=sys.stderr)
+        print("num_stripe_jobs must be >= 1", file=sys.stderr)
         sys.exit(2)
     anchor_job_size = _prompt_int(
         "anchor_job_size (number of task frames in job_anchor)",
@@ -365,7 +366,7 @@ def cmd_wizard(args: argparse.Namespace) -> None:
     print(f"task name: {task_name!r}")
     print(f"step: {step}")
     print(f"anchor_job_size: {anchor_job_size}")
-    print(f"stripe_step: {stripe_step}")
+    print(f"num_stripe_jobs: {stripe_step}")
 
     if args.dry_run:
         print("\n--- dry-run (no CVAT auth required) ---")
@@ -424,15 +425,18 @@ def main() -> None:
         type=int,
         default=None,
         metavar="N",
-        help="job_anchor includes N task-relative frames (0..N-1; default 3 * --stripe-step)",
+        help="job_anchor includes N task-relative frames (0..N-1; default 3 * --num-stripe-jobs)",
     )
     cr.add_argument(
-        "--stripe-step",
+        "--num-stripe-jobs",
+        "--num_stripe_jobs",
         type=int,
-        default=10,
+        default=DEFAULT_NUM_STRIPE_JOBS,
+        dest="stripe_step",
         metavar="K",
-        help="Stripe spacing; creates K stripe jobs for offsets 0..K-1 (default 10)",
+        help=f"Number of stripe jobs to create, one per offset 0..K-1 (default {DEFAULT_NUM_STRIPE_JOBS})",
     )
+    cr.add_argument("--stripe-step", type=int, dest="stripe_step", help=argparse.SUPPRESS)
     cr.add_argument("--dry-run", action="store_true")
     cr.set_defaults(func=cmd_create)
 
