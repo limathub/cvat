@@ -20,9 +20,38 @@ The helper `customization/scripts/cvat_api_env.py` reads these values for all sc
 
 ### 1. Create Task And Jobs
 
+From a video file (interactive wizard):
+
 ```bash
 python3 customization/scripts/cvat_create_task_from_video.py --video /path/to/video.mp4
 ```
+
+From a detectrack export folder (non-interactive; reads `manifest.json` + sibling `clip.mp4`):
+
+```bash
+python3 customization/scripts/cvat_create_task_from_video.py create \
+  --manifest data/cvat_exports/<task_name>/manifest.json
+```
+
+Shortcut (same as `create --manifest`):
+
+```bash
+python3 customization/scripts/cvat_create_task_from_video.py \
+  --manifest data/cvat_exports/<task_name>/manifest.json
+```
+
+The manifest drives CVAT task data:
+
+| Manifest field | Script / CVAT usage |
+|----------------|---------------------|
+| `task_name` | CVAT task name |
+| `cvat_step` | `frame_filter=step=N` |
+| `cvat_start_frame_in_clip` | data `start_frame` |
+| `class_names` | task labels |
+| `num_stripe_jobs` | optional; stripe job count (default 6) |
+| `anchor_job_size` | optional; `job_anchor` frame count (default `3 * num_stripe_jobs`) |
+
+CLI flags override manifest values when both are given. The script checks `cvat_step == frame_decimation` and that `clip.mp4` exists next to the manifest.
 
 The wizard asks for:
 
@@ -33,7 +62,8 @@ The wizard asks for:
 
 Fixed defaults:
 
-- `stop_frame=0`: import the full video.
+- `stop_frame=0`: import the full clip (logical sequence bounds are enforced on detectrack import).
+- `start_frame`: from manifest `cvat_start_frame_in_clip` when using `--manifest`, else `0`.
 - `image_quality=85`.
 - `segment_size=0`: CVAT expands this to the task data size.
 - `consensus_replicas=0`.
