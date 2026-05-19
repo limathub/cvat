@@ -11,7 +11,7 @@ job's included_frames breaks that behavior.
 Use after interleaved/stripe jobs so stripe jobs inherit overlapping rectangles.
 
 Environment (same style as cvat_interleaved_jobs.py):
-  CVAT_HOST     e.g. http://localhost:8080
+  CVAT_API_URL  e.g. http://localhost:8080
   CVAT_ACCESS_TOKEN / CVAT_TOKEN / CVAT_API_TOKEN
   or CVAT_USER + CVAT_PASSWORD
 

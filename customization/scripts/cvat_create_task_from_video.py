@@ -14,7 +14,7 @@ Subcommands:
             import, then rebuild Job1 + stripe jobs.
 
 Environment:
-  CVAT_HOST     e.g. http://localhost:8080
+  CVAT_API_URL  e.g. http://localhost:8080
 
   Authentication (one of):
     CVAT_ACCESS_TOKEN   Bearer token (UI: Personal access token)

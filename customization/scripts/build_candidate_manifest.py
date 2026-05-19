@@ -8,7 +8,7 @@ It also indexes exact keyframe boxes on owned task frames as frame/track
 candidates. Optionally include admin final in the same file with --admin-job.
 
 Environment:
-  CVAT_HOST     e.g. http://localhost:8080
+  CVAT_API_URL  e.g. http://localhost:8080
   CVAT_ACCESS_TOKEN / CVAT_TOKEN / CVAT_API_TOKEN
   or CVAT_USER + CVAT_PASSWORD
 """

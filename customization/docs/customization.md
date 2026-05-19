@@ -4,17 +4,26 @@ This runbook describes the custom tracked-annotation workflow built on top of CV
 
 ## Environment
 
-Set the CVAT host and one auth method:
+Two different variables share similar names — do not mix them up:
+
+| Variable | Used by | Example |
+|----------|---------|---------|
+| `CVAT_API_URL` | **Customization Python scripts** | `http://localhost:8080` (full URL) |
+| `CVAT_HOST` | **docker compose / Traefik** (`.env` or shell before `compose up`) | `localhost` or `james-26-laptop` (hostname only, no `http://`) |
+
+Set API access and auth for scripts:
 
 ```bash
-export CVAT_HOST=http://localhost:8080
+export CVAT_API_URL=http://localhost:8080
 export CVAT_ACCESS_TOKEN=<token>
 # or:
 export CVAT_USER=<username>
 export CVAT_PASSWORD=<password>
 ```
 
-The helper `customization/scripts/cvat_api_env.py` reads these values for all scripts. Run commands from the CVAT repository root unless noted otherwise.
+The helper `customization/scripts/cvat_api_env.py` reads `CVAT_API_URL` and auth. Run commands from the CVAT repository root unless noted otherwise.
+
+For `docker compose`, put `CVAT_HOST=localhost` (or your browser hostname) in `~/repos/cvat/.env` — not in the same value as `CVAT_API_URL`.
 
 ## Quick Workflow
 
@@ -226,13 +235,13 @@ Stripe jobs can overlap `job_anchor` frames. That is expected. `job_anchor` prov
 Check recent tasks:
 
 ```bash
-curl -s -H "Authorization: Bearer $CVAT_ACCESS_TOKEN"   "$CVAT_HOST/api/tasks?page_size=20&ordering=-id"   | jq '.results[] | {id, name, size, created_date}'
+curl -s -H "Authorization: Bearer $CVAT_ACCESS_TOKEN"   "$CVAT_API_URL/api/tasks?page_size=20&ordering=-id"   | jq '.results[] | {id, name, size, created_date}'
 ```
 
 Check one task:
 
 ```bash
-curl -s -H "Authorization: Bearer $CVAT_ACCESS_TOKEN"   "$CVAT_HOST/api/tasks/<TASK_ID>" | jq '{id, name, size}'
+curl -s -H "Authorization: Bearer $CVAT_ACCESS_TOKEN"   "$CVAT_API_URL/api/tasks/<TASK_ID>" | jq '{id, name, size}'
 ```
 
 Check task names directly in DB:
