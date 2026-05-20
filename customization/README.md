@@ -93,7 +93,7 @@ All scripts use `customization/scripts/cvat_api_env.py` for `CVAT_API_URL`, auth
 | `cvat_create_task_from_video.py` | Create task, upload video (`--video` or `--manifest`), set `frame_filter`, build `job_anchor` + stripe jobs. Subcommands: `probe`, `create`, `wizard`. |
 | `cvat_interleaved_jobs.py` | Rebuild manual-frame jobs on an existing task (`rebuild --task-id N`). |
 | `copy_job_tracks_to_jobs.py` | Copy full anchor track keyframes into stripe jobs; optional `--assignees` round-robin. |
-| `merge_jobs_to_master_review.py` | Merge completed annotation-stage jobs; writes under `tmp/task-<id>/`. |
+| `merge_jobs_to_master_review.py` | Merge completed annotation-stage jobs; auto-creates validation review job if needed; writes under `tmp/task-<id>/`. |
 | `build_candidate_manifest.py` | Audit manifest of per-job candidates; optional `--admin-job`. |
 | `cvat_frame_map.py` | Helpers for task-frame ↔ source-frame mapping (imported by other tools). |
 | `cvat_api_env.py` | Shared `requests` session; not invoked directly. |

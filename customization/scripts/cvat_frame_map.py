@@ -30,6 +30,14 @@ def frame_mapping_info(meta: dict[str, Any]) -> dict[str, Any]:
     return {"rule": "uniform_step", "start_frame": start, "frame_step": step, "size": size}
 
 
+def all_task_annotation_frames(meta: dict[str, Any]) -> list[int]:
+    """Return every task-relative frame index (0 .. size-1) for full-task jobs."""
+    size = int(meta.get("size") or 0)
+    if size < 1:
+        return []
+    return list(range(size))
+
+
 def included_task_frames(meta: dict[str, Any]) -> list[int]:
     """Return job-owned frames in task-relative annotation coordinates."""
     step = frame_step(meta)

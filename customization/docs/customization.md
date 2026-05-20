@@ -138,20 +138,21 @@ Automatic selection includes only jobs where:
 - `stage == "annotation"`
 - `state == "completed"`
 
-`job_anchor` defines track identity. Stripe jobs contribute keyframes from all frames they own, including frames beyond `anchor_job_size`.
+`job_anchor` defines track identity for shared track indices. Stripe jobs contribute keyframes from all frames they own, including frames beyond `anchor_job_size`. Extra stripe-only tracks (for example smoke) are appended to the merged result even when the anchor has fewer tracks.
 
-By default, the script **applies** the merge to the next available review job on the task:
+By default, the script **applies** the merge to a review job on the task:
 
-1. Lowest-id `validation`-stage annotation job not in the merge set, else  
-2. Lowest-id annotation job with id greater than all merged jobs.
+1. Use an existing `validation`-stage job not in the merge set (lowest id), else  
+2. Use an existing annotation job with id greater than all merged jobs, else  
+3. **Create** a new validation job covering all task frames, then apply.
 
 ```bash
 python3 customization/scripts/merge_jobs_to_master_review.py --task-id <task_id>
 ```
 
-Use `--dry-run` or `--no-apply` to only write `tmp/task-<task_id>/` files. Override the target with `--apply-job <review_job_id>`.
+Use `--dry-run` or `--no-apply` to only write `tmp/task-<task_id>/` files. Override the target with `--apply-job <review_job_id>`. Use `--no-create-review-job` to fail instead of creating a validation job.
 
-Applying overwrites that review job's annotation payload. Create a validation-stage job in CVAT first if the task has only annotation-stage stripe jobs.
+Applying overwrites that review job's annotation payload.
 
 ### 6. Build Candidate Manifest
 

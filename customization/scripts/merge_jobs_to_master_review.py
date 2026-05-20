@@ -3,9 +3,11 @@
 """
 Merge completed interleaved CVAT jobs into one master-review annotation payload.
 
-The anchor job defines final track identity. Stripe jobs are treated as
-owners for their included task frames; if an owner job has a keyframe on its
-owned frame, that keyframe replaces the anchor keyframe in the merged result.
+The anchor job defines final track identity for shared track indices. Stripe
+jobs are treated as owners for their included task frames; if an owner job has
+a keyframe on its owned frame, that keyframe replaces the anchor keyframe in
+the merged result. Stripe tracks beyond the anchor track count (for example a
+smoke track) are appended and merged from stripe-owned keyframes only.
 
 This script does not synthesize interpolation points. CVAT tracks are sparse,
 so intermediate boxes remain CVAT's normal track interpolation.
@@ -19,7 +21,7 @@ Examples:
   python customization/scripts/merge_jobs_to_master_review.py --task-id 7 --dry-run
 
   python customization/scripts/merge_jobs_to_master_review.py --task-id 7
-  # applies to the next validation job, or the lowest job id after stripe jobs
+  # creates a validation review job if needed, then applies the merge
 
   python customization/scripts/merge_jobs_to_master_review.py \
     --anchor-job 7 --stripe-jobs 8-16 --output-dir /tmp/cvat-merge --dry-run
@@ -42,6 +44,7 @@ import requests
 
 from cvat_api_env import cvat_session_from_env
 from cvat_frame_map import (
+    all_task_annotation_frames,
     frame_mapping_info,
     included_task_frames,
     load_task_data_meta,
@@ -114,6 +117,31 @@ def _resolve_apply_job_id(
     return None
 
 
+def _create_validation_review_job(s: requests.Session, task_id: int) -> dict[str, Any]:
+    """Create a full-task validation-stage job for master-review apply."""
+    meta = load_task_data_meta(s, task_id)
+    frames = all_task_annotation_frames(meta)
+    if not frames:
+        raise RuntimeError(f"Task {task_id} has no annotation frames")
+
+    r = _api(
+        s,
+        "POST",
+        "/api/jobs",
+        json={
+            "type": "annotation",
+            "task_id": task_id,
+            "stage": "validation",
+            "frame_selection_method": "manual",
+            "frames": frames,
+        },
+    )
+    if r.status_code != 201:
+        print(r.text, file=sys.stderr)
+    r.raise_for_status()
+    return r.json()
+
+
 def _completed_annotation_jobs(jobs: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [
         job
@@ -122,15 +150,30 @@ def _completed_annotation_jobs(jobs: list[dict[str, Any]]) -> list[dict[str, Any
     ]
 
 
-def _print_job_plan(anchor_job: int, stripe_jobs: list[int], task_jobs: list[dict[str, Any]]) -> None:
+def _print_job_plan(
+    anchor_job: int,
+    stripe_jobs: list[int],
+    task_jobs: list[dict[str, Any]],
+    *,
+    apply_job_id: int | None = None,
+) -> None:
     print(f"anchor job: {anchor_job}")
     print(f"stripe jobs: {','.join(map(str, stripe_jobs))}")
+    if apply_job_id is not None:
+        print(f"review job: {apply_job_id} (apply target)")
     if not task_jobs:
         return
     print("task annotation jobs:")
     for index, job in enumerate(task_jobs):
         job_id = int(job["id"])
-        role = "anchor" if job_id == anchor_job else "stripe" if job_id in stripe_jobs else "ignored"
+        if job_id == apply_job_id:
+            role = "review"
+        elif job_id == anchor_job:
+            role = "anchor"
+        elif job_id in stripe_jobs:
+            role = "stripe"
+        else:
+            role = "ignored"
         print(
             f"  {index + 1}. job_id={job_id} role={role} "
             f"frames={job.get('frame_count')} stage={job.get('stage')} "
@@ -207,6 +250,106 @@ def _shape_map(track: dict[str, Any]) -> dict[int, dict[str, Any]]:
     return {int(shape["frame"]): _strip_shape(shape) for shape in track.get("shapes", [])}
 
 
+def _stripe_track_template(tracks: list[dict[str, Any]], track_index: int) -> dict[str, Any] | None:
+    if track_index >= len(tracks):
+        return None
+    return _strip_track(tracks[track_index])
+
+
+def _apply_stripe_track_keyframes(
+    *,
+    merged_map: dict[int, dict[str, Any]],
+    tracks: list[dict[str, Any]],
+    track_index: int,
+    owned_frames: list[int],
+    stripe_id: int,
+    job: dict[str, Any],
+    task_meta: dict[str, Any],
+    provenance: dict[str, Any],
+    provenance_rule: str,
+    source_counts: Counter[str],
+    fallback_counts: Counter[str],
+    override_counts: Counter[str],
+) -> None:
+    if track_index >= len(tracks):
+        for _frame in owned_frames:
+            fallback_counts[str(stripe_id)] += 1
+        return
+
+    owner_shapes = _shape_map(tracks[track_index])
+    for frame in owned_frames:
+        shape = owner_shapes.get(frame)
+        if shape is None:
+            fallback_counts[str(stripe_id)] += 1
+            continue
+
+        merged_map[frame] = shape
+        override_counts[str(stripe_id)] += 1
+        provenance["frame_sources"][str(frame)] = {
+            **_provenance_actor(job, stripe_id),
+            "source_media_frame": task_frame_to_source_media_frame(task_meta, frame),
+            "rule": provenance_rule,
+            "track_index": track_index,
+        }
+        source_counts[str(stripe_id)] += 1
+
+
+def _merge_stripe_extra_tracks(
+    *,
+    merged_tracks: list[dict[str, Any]],
+    stripe_loads: dict[int, dict[str, Any]],
+    stripe_ids: list[int],
+    anchor_track_count: int,
+    task_meta: dict[str, Any],
+    provenance: dict[str, Any],
+    warnings: list[str],
+    source_counts: Counter[str],
+    fallback_counts: Counter[str],
+    override_counts: Counter[str],
+) -> None:
+    max_track_count = anchor_track_count
+    for loaded in stripe_loads.values():
+        max_track_count = max(max_track_count, len(loaded["ann"].get("tracks") or []))
+
+    for track_index in range(anchor_track_count, max_track_count):
+        template: dict[str, Any] | None = None
+        for stripe_id in stripe_ids:
+            template = _stripe_track_template(stripe_loads[stripe_id]["ann"].get("tracks") or [], track_index)
+            if template is not None:
+                break
+        if template is None:
+            continue
+
+        merged_map: dict[int, dict[str, Any]] = {}
+        for stripe_id in stripe_ids:
+            loaded = stripe_loads[stripe_id]
+            _apply_stripe_track_keyframes(
+                merged_map=merged_map,
+                tracks=loaded["ann"].get("tracks") or [],
+                track_index=track_index,
+                owned_frames=included_task_frames(loaded["meta"]),
+                stripe_id=stripe_id,
+                job=loaded["job"],
+                task_meta=task_meta,
+                provenance=provenance,
+                provenance_rule="stripe_extra_track_keyframe",
+                source_counts=source_counts,
+                fallback_counts=fallback_counts,
+                override_counts=override_counts,
+            )
+
+        if not merged_map:
+            warnings.append(
+                f"track_index {track_index}: no stripe keyframes found for extra track; skipped"
+            )
+            continue
+
+        shapes = [merged_map[frame] for frame in sorted(merged_map)]
+        template["shapes"] = shapes
+        template["frame"] = int(shapes[0]["frame"])
+        merged_tracks.append(template)
+
+
 def _merge(
     s: requests.Session,
     *,
@@ -226,8 +369,8 @@ def _merge(
     provenance: dict[str, Any] = {
         "anchor_job_id": anchor_id,
         "task_id": anchor["job"].get("task_id"),
-        "strategy": "anchor_tracks_with_stripe_keyframe_overrides",
-        "track_match": "track_index",
+        "strategy": "anchor_tracks_with_stripe_keyframe_overrides_plus_stripe_extra_tracks",
+        "track_match": "track_index; indices beyond anchor are appended from stripe jobs",
         "frame_mapping": frame_mapping_info(task_meta),
         "frame_sources": {},
         "jobs": {
@@ -252,11 +395,12 @@ def _merge(
         }
         source_counts[str(anchor_id)] += 1
 
+    stripe_loads: dict[int, dict[str, Any]] = {}
     for stripe_id in stripe_ids:
         loaded = _load_job(s, stripe_id)
+        stripe_loads[stripe_id] = loaded
         job = loaded["job"]
-        ann = loaded["ann"]
-        tracks = ann.get("tracks") or []
+        tracks = loaded["ann"].get("tracks") or []
         owned_frames = included_task_frames(loaded["meta"])
         provenance["jobs"][str(stripe_id)] = {
             "job_id": stripe_id,
@@ -265,35 +409,47 @@ def _merge(
             "owned_task_frames": owned_frames,
         }
 
-        if len(tracks) != len(merged_tracks):
+        if len(tracks) < len(merged_tracks):
             warnings.append(
-                f"job {stripe_id}: track count {len(tracks)} differs from anchor count {len(merged_tracks)}"
+                f"job {stripe_id}: track count {len(tracks)} is less than anchor count "
+                f"{len(merged_tracks)}"
+            )
+        elif len(tracks) > len(merged_tracks):
+            warnings.append(
+                f"job {stripe_id}: {len(tracks) - len(merged_tracks)} extra track(s) beyond anchor "
+                f"will be appended (e.g. smoke)"
             )
 
         for track_index, merged_map in enumerate(merged_shape_maps):
-            if track_index >= len(tracks):
-                for frame in owned_frames:
-                    fallback_counts[str(stripe_id)] += 1
-                continue
+            _apply_stripe_track_keyframes(
+                merged_map=merged_map,
+                tracks=tracks,
+                track_index=track_index,
+                owned_frames=owned_frames,
+                stripe_id=stripe_id,
+                job=job,
+                task_meta=task_meta,
+                provenance=provenance,
+                provenance_rule="stripe_owner_keyframe",
+                source_counts=source_counts,
+                fallback_counts=fallback_counts,
+                override_counts=override_counts,
+            )
 
-            owner_shapes = _shape_map(tracks[track_index])
-            for frame in owned_frames:
-                shape = owner_shapes.get(frame)
-                if shape is None:
-                    fallback_counts[str(stripe_id)] += 1
-                    continue
+    _merge_stripe_extra_tracks(
+        merged_tracks=merged_tracks,
+        stripe_loads=stripe_loads,
+        stripe_ids=stripe_ids,
+        anchor_track_count=len(anchor_tracks),
+        task_meta=task_meta,
+        provenance=provenance,
+        warnings=warnings,
+        source_counts=source_counts,
+        fallback_counts=fallback_counts,
+        override_counts=override_counts,
+    )
 
-                merged_map[frame] = shape
-                override_counts[str(stripe_id)] += 1
-
-                provenance["frame_sources"][str(frame)] = {
-                    **_provenance_actor(job, stripe_id),
-                    "source_media_frame": task_frame_to_source_media_frame(task_meta, frame),
-                    "rule": "stripe_owner_keyframe",
-                }
-                source_counts[str(stripe_id)] += 1
-
-    for track, shape_by_frame in zip(merged_tracks, merged_shape_maps):
+    for track, shape_by_frame in zip(merged_tracks[: len(merged_shape_maps)], merged_shape_maps):
         shapes = [shape_by_frame[frame] for frame in sorted(shape_by_frame)]
         track["shapes"] = shapes
         track["frame"] = int(shapes[0]["frame"]) if shapes else int(track.get("frame", 0))
@@ -347,6 +503,11 @@ def main() -> None:
         action="store_true",
         help="Only write tmp outputs; do not PUT to a review job",
     )
+    p.add_argument(
+        "--no-create-review-job",
+        action="store_true",
+        help="Do not create a validation job when none exists (fail instead)",
+    )
     p.add_argument("--dry-run", action="store_true", help="Alias for --no-apply")
     args = p.parse_args()
     if args.dry_run:
@@ -384,26 +545,34 @@ def main() -> None:
 
     merge_job_ids = {anchor_id, *stripe_ids}
     apply_job_id = args.apply_job
-    if apply_job_id is None and not args.no_apply:
-        all_jobs = _task_jobs(s, task_id) if task_id is not None else []
+    created_review_job = False
+    if apply_job_id is None and not args.no_apply and task_id is not None:
+        all_jobs = _task_jobs(s, task_id)
         apply_job_id = _resolve_apply_job_id(all_jobs, merge_job_ids=merge_job_ids)
         if apply_job_id is None:
-            print(
-                "No apply target: create a validation-stage review job on this task "
-                "(or pass --apply-job <id>). Merge jobs: "
-                + ",".join(map(str, sorted(merge_job_ids))),
-                file=sys.stderr,
-            )
-            if all_jobs:
-                print("task jobs:", file=sys.stderr)
+            if args.no_create_review_job:
+                print(
+                    "No apply target: create a validation-stage review job on this task "
+                    "(or pass --apply-job <id>). Merge jobs: "
+                    + ",".join(map(str, sorted(merge_job_ids))),
+                    file=sys.stderr,
+                )
                 for job in all_jobs:
                     print(
                         f"  job_id={job['id']} stage={job.get('stage')} "
                         f"state={job.get('state')} type={job.get('type')}",
                         file=sys.stderr,
                     )
-            sys.exit(1)
-        print(f"apply job: {apply_job_id} (auto)")
+                sys.exit(1)
+            review_job = _create_validation_review_job(s, task_id)
+            apply_job_id = int(review_job["id"])
+            created_review_job = True
+            print(
+                f"created validation review job: {apply_job_id} "
+                f"(frame_count={review_job.get('frame_count')})"
+            )
+        else:
+            print(f"apply job: {apply_job_id} (auto)")
 
     if anchor_id in stripe_ids:
         print(f"anchor job {anchor_id} must not be included in stripe jobs", file=sys.stderr)
@@ -412,7 +581,9 @@ def main() -> None:
         print("No stripe jobs selected", file=sys.stderr)
         sys.exit(2)
 
-    _print_job_plan(anchor_id, stripe_ids, task_jobs)
+    if created_review_job and task_id is not None:
+        task_jobs = _task_annotation_jobs(s, task_id)
+    _print_job_plan(anchor_id, stripe_ids, task_jobs, apply_job_id=apply_job_id)
     payload, provenance, warnings = _merge(s, anchor_id=anchor_id, stripe_ids=stripe_ids)
     _write_outputs(output_dir, payload, provenance)
 
