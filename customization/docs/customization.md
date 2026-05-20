@@ -140,13 +140,18 @@ Automatic selection includes only jobs where:
 
 `job_anchor` defines track identity. Stripe jobs contribute keyframes from all frames they own, including frames beyond `anchor_job_size`.
 
-To also load the merged result into an existing review/master job:
+By default, the script **applies** the merge to the next available review job on the task:
+
+1. Lowest-id `validation`-stage annotation job not in the merge set, else  
+2. Lowest-id annotation job with id greater than all merged jobs.
 
 ```bash
-python3 customization/scripts/merge_jobs_to_master_review.py --task-id <task_id> --apply-job <review_job_id>
+python3 customization/scripts/merge_jobs_to_master_review.py --task-id <task_id>
 ```
 
-`--apply-job` overwrites that review job's annotation payload.
+Use `--dry-run` or `--no-apply` to only write `tmp/task-<task_id>/` files. Override the target with `--apply-job <review_job_id>`.
+
+Applying overwrites that review job's annotation payload. Create a validation-stage job in CVAT first if the task has only annotation-stage stripe jobs.
 
 ### 6. Build Candidate Manifest
 

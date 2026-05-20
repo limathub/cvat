@@ -18,6 +18,9 @@ Environment:
 Examples:
   python customization/scripts/merge_jobs_to_master_review.py --task-id 7 --dry-run
 
+  python customization/scripts/merge_jobs_to_master_review.py --task-id 7
+  # applies to the next validation job, or the lowest job id after stripe jobs
+
   python customization/scripts/merge_jobs_to_master_review.py \
     --anchor-job 7 --stripe-jobs 8-16 --output-dir /tmp/cvat-merge --dry-run
 
@@ -66,14 +69,49 @@ def _parse_job_range(spec: str) -> list[int]:
     return [int(x.strip()) for x in spec.split(",") if x.strip()]
 
 
-def _task_annotation_jobs(s: requests.Session, task_id: int) -> list[dict[str, Any]]:
+def _task_jobs(s: requests.Session, task_id: int) -> list[dict[str, Any]]:
     r = _api(s, "GET", "/api/jobs", params={"task_id": task_id, "page_size": "500"})
     r.raise_for_status()
     payload = r.json()
     jobs = payload.get("results", payload)
-    annotation_jobs = [job for job in jobs if job.get("type") == "annotation"]
-    annotation_jobs.sort(key=lambda job: int(job["id"]))
-    return annotation_jobs
+    jobs.sort(key=lambda job: int(job["id"]))
+    return jobs
+
+
+def _task_annotation_jobs(s: requests.Session, task_id: int) -> list[dict[str, Any]]:
+    return [job for job in _task_jobs(s, task_id) if job.get("type") == "annotation"]
+
+
+def _resolve_apply_job_id(
+    jobs: list[dict[str, Any]],
+    *,
+    merge_job_ids: set[int],
+) -> int | None:
+    """
+    Pick the master-review apply target on this task.
+
+    1. Lowest-id validation-stage annotation job not used in the merge.
+    2. Else lowest-id job with id greater than all merge jobs (next created slot).
+    """
+    merge_job_ids = {int(jid) for jid in merge_job_ids}
+    others = [
+        job
+        for job in jobs
+        if int(job["id"]) not in merge_job_ids and job.get("type") == "annotation"
+    ]
+    if not others:
+        return None
+
+    validation = [job for job in others if job.get("stage") == "validation"]
+    if validation:
+        return int(min(validation, key=lambda job: int(job["id"]))["id"])
+
+    max_merge_id = max(merge_job_ids)
+    after_merge = [job for job in others if int(job["id"]) > max_merge_id]
+    if after_merge:
+        return int(min(after_merge, key=lambda job: int(job["id"]))["id"])
+
+    return None
 
 
 def _completed_annotation_jobs(jobs: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -299,12 +337,24 @@ def main() -> None:
         help="e.g. 8-16 or 8,9,10; defaults to all non-anchor annotation jobs when --task-id is used",
     )
     p.add_argument("--output-dir", type=Path, help="Defaults to tmp/task-<task_id> with --task-id")
-    p.add_argument("--apply-job", type=int, help="PUT merged annotations into this master-review job")
-    p.add_argument("--dry-run", action="store_true", help="Do not PUT to --apply-job")
+    p.add_argument(
+        "--apply-job",
+        type=int,
+        help="PUT merged annotations into this master-review job (default: auto with --task-id)",
+    )
+    p.add_argument(
+        "--no-apply",
+        action="store_true",
+        help="Only write tmp outputs; do not PUT to a review job",
+    )
+    p.add_argument("--dry-run", action="store_true", help="Alias for --no-apply")
     args = p.parse_args()
+    if args.dry_run:
+        args.no_apply = True
 
     s = _session()
     task_jobs: list[dict[str, Any]] = []
+    task_id: int | None = args.task_id
     if args.task_id is not None:
         task_jobs = _task_annotation_jobs(s, args.task_id)
         eligible_jobs = _completed_annotation_jobs(task_jobs)
@@ -327,6 +377,33 @@ def main() -> None:
         anchor_id = args.anchor_job
         stripe_ids = _parse_job_range(args.stripe_jobs)
         output_dir = args.output_dir or Path("tmp/cvat-task-output")
+        if task_id is None:
+            anchor_meta = _api(s, "GET", f"/api/jobs/{anchor_id}")
+            anchor_meta.raise_for_status()
+            task_id = int(anchor_meta.json()["task_id"])
+
+    merge_job_ids = {anchor_id, *stripe_ids}
+    apply_job_id = args.apply_job
+    if apply_job_id is None and not args.no_apply:
+        all_jobs = _task_jobs(s, task_id) if task_id is not None else []
+        apply_job_id = _resolve_apply_job_id(all_jobs, merge_job_ids=merge_job_ids)
+        if apply_job_id is None:
+            print(
+                "No apply target: create a validation-stage review job on this task "
+                "(or pass --apply-job <id>). Merge jobs: "
+                + ",".join(map(str, sorted(merge_job_ids))),
+                file=sys.stderr,
+            )
+            if all_jobs:
+                print("task jobs:", file=sys.stderr)
+                for job in all_jobs:
+                    print(
+                        f"  job_id={job['id']} stage={job.get('stage')} "
+                        f"state={job.get('state')} type={job.get('type')}",
+                        file=sys.stderr,
+                    )
+            sys.exit(1)
+        print(f"apply job: {apply_job_id} (auto)")
 
     if anchor_id in stripe_ids:
         print(f"anchor job {anchor_id} must not be included in stripe jobs", file=sys.stderr)
@@ -349,15 +426,15 @@ def main() -> None:
     for warning in warnings:
         print(f"warning: {warning}", file=sys.stderr)
 
-    if args.apply_job and not args.dry_run:
-        current = _api(s, "GET", f"/api/jobs/{args.apply_job}/annotations")
+    if apply_job_id is not None and not args.no_apply:
+        current = _api(s, "GET", f"/api/jobs/{apply_job_id}/annotations")
         current.raise_for_status()
         payload["version"] = int(current.json().get("version", 0))
-        response = _api(s, "PUT", f"/api/jobs/{args.apply_job}/annotations", json=payload)
+        response = _api(s, "PUT", f"/api/jobs/{apply_job_id}/annotations", json=payload)
         if not response.ok:
             print(response.text, file=sys.stderr)
         response.raise_for_status()
-        print(f"applied merged annotations to job {args.apply_job}")
+        print(f"applied merged annotations to job {apply_job_id}")
 
 
 if __name__ == "__main__":

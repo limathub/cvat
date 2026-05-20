@@ -112,6 +112,7 @@ python3 customization/scripts/copy_job_tracks_to_jobs.py --task-id 9 --dry-run
 python3 customization/scripts/copy_job_tracks_to_jobs.py --task-id 9 --assignees alice,bob
 
 python3 customization/scripts/merge_jobs_to_master_review.py --task-id 9
+python3 customization/scripts/merge_jobs_to_master_review.py --task-id 9 --dry-run
 python3 customization/scripts/merge_jobs_to_master_review.py --task-id 9 --apply-job <review_job_id>
 ```
 
