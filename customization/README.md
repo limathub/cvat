@@ -14,6 +14,10 @@ customization/
     distribution.md         HTTPS / deployment / patch strategy notes
 ```
 
+## Environment
+
+Copy [`.env.example`](../.env.example) to `.env` at the repo root (or export `CVAT_HOST` / `CVAT_API_URL` and auth vars manually). See [docs/customization.md](docs/customization.md#environment).
+
 ## Quick commands
 
 From the CVAT repository root:

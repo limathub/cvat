@@ -51,6 +51,7 @@ yarn-error.log*
 node_modules
 /*env*/
 /.*env*
+!/.env.example
 perfkit.egg-info/
 
 # Ignore all js dists
