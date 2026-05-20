@@ -14,7 +14,7 @@ Requires CVAT with:
   - DELETE /api/jobs/{id} for annotation jobs (patched JobViewSet.perform_destroy)
 
 Environment:
-  CVAT_HOST     e.g. http://localhost:8080
+  CVAT_API_URL  e.g. http://localhost:8080
 
   Authentication (one of):
     CVAT_ACCESS_TOKEN or CVAT_TOKEN or CVAT_API_TOKEN (Bearer)
@@ -22,7 +22,7 @@ Environment:
 
 Example (after you created a new task, uploaded the same video, set frame_filter step=3, etc.):
 
-  export CVAT_HOST=http://localhost:8080 CVAT_USER=admin CVAT_PASSWORD=...
+  export CVAT_API_URL=http://localhost:8080 CVAT_USER=admin CVAT_PASSWORD=...
   python customization/scripts/cvat_interleaved_jobs.py rebuild --task-id 12
 
 Use --dry-run to only print frame lists.

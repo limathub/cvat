@@ -11,24 +11,24 @@ cp .env.example .env
 # edit CVAT_HOST (Traefik hostname), CVAT_API_URL, CVAT_USER, CVAT_PASSWORD
 ```
 
-Docker Compose and customization scripts both read that file. Use two host variables:
+Two different variables share similar names — do not mix them up:
 
 | Variable | Used by | Example |
 |----------|---------|---------|
-| `CVAT_HOST` | Docker / Traefik | `localhost` or `my-server` (no `http://`) |
-| `CVAT_API_URL` | Python scripts | `http://localhost:8080` |
+| `CVAT_API_URL` | **Customization Python scripts** | `http://localhost:8080` (full URL) |
+| `CVAT_HOST` | **docker compose / Traefik** | `localhost` or `my-server` (hostname only, no `http://`) |
 
 **Alternative (no `.env`):** export variables in the shell before running scripts:
 
 ```bash
-export CVAT_HOST=http://localhost:8080
+export CVAT_API_URL=http://localhost:8080
 export CVAT_ACCESS_TOKEN=<token>
 # or:
 export CVAT_USER=<username>
 export CVAT_PASSWORD=<password>
 ```
 
-The helper `customization/scripts/cvat_api_env.py` loads `.env` when present (without overriding existing exports), then resolves `CVAT_API_URL` or `CVAT_HOST`. Run commands from the CVAT repository root unless noted otherwise.
+The helper `customization/scripts/cvat_api_env.py` loads `.env` when present (without overriding existing exports), then reads `CVAT_API_URL` and auth. Run commands from the CVAT repository root unless noted otherwise.
 
 ## Quick Workflow
 
@@ -240,13 +240,13 @@ Stripe jobs can overlap `job_anchor` frames. That is expected. `job_anchor` prov
 Check recent tasks:
 
 ```bash
-curl -s -H "Authorization: Bearer $CVAT_ACCESS_TOKEN"   "$CVAT_HOST/api/tasks?page_size=20&ordering=-id"   | jq '.results[] | {id, name, size, created_date}'
+curl -s -H "Authorization: Bearer $CVAT_ACCESS_TOKEN"   "$CVAT_API_URL/api/tasks?page_size=20&ordering=-id"   | jq '.results[] | {id, name, size, created_date}'
 ```
 
 Check one task:
 
 ```bash
-curl -s -H "Authorization: Bearer $CVAT_ACCESS_TOKEN"   "$CVAT_HOST/api/tasks/<TASK_ID>" | jq '{id, name, size}'
+curl -s -H "Authorization: Bearer $CVAT_ACCESS_TOKEN"   "$CVAT_API_URL/api/tasks/<TASK_ID>" | jq '{id, name, size}'
 ```
 
 Check task names directly in DB:
