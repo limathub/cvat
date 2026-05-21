@@ -337,7 +337,7 @@ def _cvat_upload_and_jobs(
                 indent=2,
             )
         )
-        return
+        return None
 
     tr = _api(s, "POST", "/api/tasks", json=task_body)
     if tr.status_code != 201:
@@ -413,7 +413,9 @@ def _cvat_upload_and_jobs(
         stripe_step=stripe_step,
         dry_run=False,
     )
-    print(json.dumps({"task_id": tid, "task_size": n}, indent=2))
+    result = {"task_id": tid, "task_size": n}
+    print(json.dumps(result, indent=2))
+    return result
 
 
 def cmd_create(args: argparse.Namespace) -> None:

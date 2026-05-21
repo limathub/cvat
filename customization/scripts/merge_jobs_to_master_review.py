@@ -43,6 +43,8 @@ from typing import Any
 import requests
 
 from cvat_api_env import cvat_session_from_env
+from labeling_workspace import export_dir as labeling_export_dir
+from labeling_workspace import resolve_workspace_by_task_id
 from cvat_frame_map import (
     all_task_annotation_frames,
     frame_mapping_info,
@@ -531,7 +533,11 @@ def main() -> None:
             stripe_ids = _parse_job_range(args.stripe_jobs)
         else:
             stripe_ids = [int(job["id"]) for job in eligible_jobs if int(job["id"]) != anchor_id]
-        output_dir = args.output_dir or Path(f"tmp/task-{args.task_id}")
+        if args.output_dir is not None:
+            output_dir = args.output_dir
+        else:
+            ws = resolve_workspace_by_task_id(args.task_id)
+            output_dir = labeling_export_dir(ws) if ws else Path(f"tmp/task-{args.task_id}")
     else:
         if args.anchor_job is None or args.stripe_jobs is None:
             p.error("provide either --task-id, or both --anchor-job and --stripe-jobs")
@@ -585,6 +591,8 @@ def main() -> None:
         task_jobs = _task_annotation_jobs(s, task_id)
     _print_job_plan(anchor_id, stripe_ids, task_jobs, apply_job_id=apply_job_id)
     payload, provenance, warnings = _merge(s, anchor_id=anchor_id, stripe_ids=stripe_ids)
+    if apply_job_id is not None:
+        provenance["apply_job_id"] = int(apply_job_id)
     _write_outputs(output_dir, payload, provenance)
 
     summary = provenance["summary"]

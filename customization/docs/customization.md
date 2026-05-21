@@ -40,7 +40,16 @@ From a video file (interactive wizard):
 python3 customization/scripts/cvat_create_task_from_video.py --video /path/to/video.mp4
 ```
 
-From a detectrack export folder (non-interactive; reads `manifest.json` + sibling `clip.mp4`):
+From a detectrack **zip package** (recommended for external handoff):
+
+```bash
+python3 customization/scripts/package_labeling_handoff.py import \
+  --package /path/to/<task_name>.zip
+```
+
+The zip must contain `manifest.json` and `clip.mp4` at the top level (or under a single top-level folder). Files are unpacked to `tmp/labeling/<task_name>/`, registered in `tmp/labeling/registry.json`, and a CVAT task is created. Re-importing the same `task_name` fails (workspace already exists).
+
+From an unpacked folder (local dev only):
 
 ```bash
 python3 customization/scripts/cvat_create_task_from_video.py create \
@@ -64,6 +73,10 @@ The manifest drives CVAT task data:
 | `class_names` | task labels |
 | `num_stripe_jobs` | optional; stripe job count (default 6) |
 | `anchor_job_size` | optional; `job_anchor` frame count (default `3 * num_stripe_jobs`) |
+| `export_formats` | optional; list of CVAT export format names for handoff export (default `CVAT for video 1.1`) |
+| `export_format` | optional; single format (alias for one-element `export_formats`) |
+| `annotation_format` | optional; alias for `export_format` |
+| `export_save_images` | optional; include images in CVAT dataset export (default `false`) |
 
 CLI flags override manifest values when both are given. The script checks `cvat_step == frame_decimation` and that `clip.mp4` exists next to the manifest.
 
@@ -129,8 +142,8 @@ python3 customization/scripts/merge_jobs_to_master_review.py --task-id <task_id>
 
 This writes:
 
-- `tmp/task-<task_id>/merged_annotations.json`
-- `tmp/task-<task_id>/provenance_manifest.json`
+- `tmp/task-<task_id>/merged_annotations.json` (or `tmp/labeling/<task_name>/export/` for handoff tasks)
+- `tmp/task-<task_id>/provenance_manifest.json` (includes `apply_job_id` for export)
 
 Automatic selection includes only jobs where:
 
@@ -154,7 +167,18 @@ Use `--dry-run` or `--no-apply` to only write `tmp/task-<task_id>/` files. Overr
 
 Applying overwrites that review job's annotation payload.
 
-### 6. Build Candidate Manifest
+### 6. Export Handoff Package (detectrack round-trip)
+
+After merge, export labels in the formats requested in the saved manifest and zip for return shipment:
+
+```bash
+python3 customization/scripts/package_labeling_handoff.py export --task-id <task_id>
+# or: export --task-name <task_name>
+```
+
+This runs merge (unless `--skip-merge`), exports each format from the review job (`apply_job_id` in provenance), and writes `tmp/labeling/<task_name>/outbound_<task_name>.zip` containing `manifest.json` (with appended `labeling_server` metadata) and `export/*`.
+
+### 7. Build Candidate Manifest
 
 Optional but recommended for audit/review:
 
@@ -264,5 +288,5 @@ docker compose exec cvat_server python manage.py shell -c "from cvat.apps.engine
 After script changes:
 
 ```bash
-python3 -m py_compile customization/scripts/cvat_create_task_from_video.py customization/scripts/cvat_interleaved_jobs.py customization/scripts/copy_job_tracks_to_jobs.py customization/scripts/merge_jobs_to_master_review.py customization/scripts/build_candidate_manifest.py
+python3 -m py_compile customization/scripts/cvat_create_task_from_video.py customization/scripts/cvat_interleaved_jobs.py customization/scripts/copy_job_tracks_to_jobs.py customization/scripts/merge_jobs_to_master_review.py customization/scripts/build_candidate_manifest.py customization/scripts/labeling_workspace.py customization/scripts/cvat_export.py customization/scripts/package_labeling_handoff.py
 ```

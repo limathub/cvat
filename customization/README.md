@@ -65,12 +65,21 @@ More detail: [docs/customization.md](docs/customization.md#environment).
       → build_candidate_manifest.py
 ```
 
-Detectrack exports (`clip.mp4` + `manifest.json`) can drive step 1 non-interactively:
+Detectrack handoff (zip with `manifest.json` + `clip.mp4`) registers a workspace and creates the task:
 
 ```bash
-python3 customization/scripts/cvat_create_task_from_video.py create \
-  --manifest /path/to/cvat_exports/<task_name>/manifest.json
+python3 customization/scripts/package_labeling_handoff.py import \
+  --package /path/to/<task_name>.zip
 ```
+
+After labeling and merge, ship labels back:
+
+```bash
+python3 customization/scripts/package_labeling_handoff.py export --task-id <id>
+# -> tmp/labeling/<task_name>/outbound_<task_name>.zip
+```
+
+Local dev can still use `--video` / `--manifest` on unpacked folders via `cvat_create_task_from_video.py`.
 
 ## Layout
 
@@ -95,6 +104,9 @@ All scripts use `customization/scripts/cvat_api_env.py` for `CVAT_API_URL`, auth
 | `copy_job_tracks_to_jobs.py` | Copy full anchor track keyframes into stripe jobs; optional `--assignees` round-robin. |
 | `merge_jobs_to_master_review.py` | Merge completed annotation-stage jobs; auto-creates validation review job if needed; writes under `tmp/task-<id>/`. |
 | `build_candidate_manifest.py` | Audit manifest of per-job candidates; optional `--admin-job`. |
+| `package_labeling_handoff.py` | Import zip package → `tmp/labeling/<task_name>/`; export merged labels + format zips → `outbound_<task_name>.zip`. |
+| `labeling_workspace.py` | Registry and workspace paths (imported by handoff + merge). |
+| `cvat_export.py` | CVAT job dataset export helper (imported by handoff). |
 | `cvat_frame_map.py` | Helpers for task-frame ↔ source-frame mapping (imported by other tools). |
 | `cvat_api_env.py` | Shared `requests` session; not invoked directly. |
 
@@ -123,7 +135,10 @@ python3 -m py_compile customization/scripts/cvat_create_task_from_video.py \
   customization/scripts/cvat_interleaved_jobs.py \
   customization/scripts/copy_job_tracks_to_jobs.py \
   customization/scripts/merge_jobs_to_master_review.py \
-  customization/scripts/build_candidate_manifest.py
+  customization/scripts/build_candidate_manifest.py \
+  customization/scripts/labeling_workspace.py \
+  customization/scripts/cvat_export.py \
+  customization/scripts/package_labeling_handoff.py
 ```
 
 ## Patches
@@ -181,8 +196,9 @@ python3 customization/scripts/copy_job_tracks_to_jobs.py --task-id 9
 
 ## Outputs
 
-Merge and manifest scripts write under **`tmp/task-<task_id>/`** (gitignored at repo root):
+Merge and manifest scripts write under **`tmp/task-<task_id>/`** or, for handoff tasks, **`tmp/labeling/<task_name>/export/`** (gitignored):
 
 - `merged_annotations.json` — CVAT annotation payload for review/import
-- `provenance_manifest.json` — which job/assignee owned each merged frame
+- `provenance_manifest.json` — which job/assignee owned each merged frame (`apply_job_id` for export)
 - `candidate_manifest.json` — per-job candidate preservation for audit
+- `annotations_cvat.zip` / `annotations_mot.zip` — format exports when using `package_labeling_handoff.py export`
