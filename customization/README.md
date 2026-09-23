@@ -64,6 +64,10 @@ More detail: [docs/customization.md](docs/customization.md#environment).
 
 4. Annotators complete their stripe jobs
 
+3b. (Optional) Upload detectrack preannotations so labelers correct
+    instead of draw → upload_preannotations.py
+    (per job, never task-level: task import copies every box into every job)
+
 5. Merge completed jobs → merged_annotations.json + provenance_manifest.json
       → merge_jobs_to_master_review.py
 
