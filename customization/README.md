@@ -26,6 +26,12 @@ On a fresh clone of branch `local/cvat-customization`, patch sources are usually
 
 ## Environment
 
+Copy [`docker-compose.override.example.yml`](../docker-compose.override.example.yml)
+to `docker-compose.override.yml` at the repo root (also gitignored) when the host
+needs a different web port or has pre-existing CVAT volumes. Read its header before
+editing: Compose concatenates `ports` lists across files, so the override needs
+`ports: !override` or the base file's 8080 binding survives alongside yours.
+
 Copy [`.env.example`](../.env.example) to `.env` at the repo root (gitignored):
 
 ```bash

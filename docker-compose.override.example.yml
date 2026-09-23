@@ -1,0 +1,47 @@
+# Copy to docker-compose.override.yml at the repo root (gitignored — it holds
+# per-machine values). Two things a host may need, both easy to get wrong:
+#
+# 1. `ports: !override`, never a plain `ports:`
+#    Compose *concatenates* port lists across files rather than replacing
+#    them, so a plain `ports:` here keeps the base file's bindings alongside
+#    yours. The base docker-compose.yml binds host 8080 (web) and 8090
+#    (traefik dashboard, its config commented out). Measured on Compose
+#    v5.1.3 with a `- "8090:8080"` entry:
+#
+#      plain      ->  8080:8080, 8090:8090, 8090:8080   (8080 conflict survives)
+#      !override  ->  8090:8080                          (what you meant)
+#
+# 2. Pre-existing volumes
+#    Volumes created before these services carried Compose labels have to be
+#    declared external, or Compose creates empty ones next to them and the
+#    stack comes up with no tasks and no accounts.
+#
+# On megawings specifically: host 8080 and 8443 belong to the GCS web stack
+# (nginx, network_mode: host), which serves drone operations. CVAT moves, not
+# it — hence 8090 below.
+#
+# Pair this with .env (also gitignored):
+#
+#   CVAT_HOST=<hostname traefik routes on>      # no scheme
+#   CVAT_API_URL=http://<hostname>:8090         # what the customization scripts call
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.override.yml
+#
+# Keep docker-compose.dev.yml out of COMPOSE_FILE unless you want a rebuild:
+# it defines `build:`, so `up -d` rebuilds cvat/server:dev instead of using
+# the image already on the host.
+
+services:
+  traefik:
+    ports: !override
+      - "8090:8080"   # host:container
+
+volumes:
+  cvat_db:
+    external: true
+    name: cvat_cvat_db
+  cvat_data:
+    external: true
+    name: cvat_cvat_data
+  cvat_keys:
+    external: true
+    name: cvat_cvat_keys
